@@ -1,0 +1,105 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+
+# For Fig 1 and 2 in paper (https://arxiv.org/pdf/1601.06748.pdf):
+# Set static V = 0.93 and gp = 5, then calculate min and max buf based on those 
+# (paper also assumes static bitrates/sizes, so min/max buf is static too for these figures).
+# The Puffer and dash.js implementations do the opposite (static min/max buf => dynamic V and gp), 
+# but this is useful to reproduce Fig 1 and 2 (and understand their units...)
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Mbps
+bitrates = [
+6.000,
+2.962,
+1.427,
+0.688,
+0.331]
+
+# Mb
+sizes = [
+18.00,
+8.886,
+4.281,
+2.064,
+0.993]
+
+def utility(m):
+    return np.log(sizes[m] / sizes[-1])
+
+# seconds
+p = 3
+# chunks
+# For Puffer, MIN and MAX are constants; V and gp are calculated from those
+V_paper = 0.93
+gp_paper = 5
+MIN_BUF_SZ_S = p * V_paper * (sizes[-2] * (utility(-1) + gp_paper) - sizes[-1] * (utility(-2) + gp_paper)) / \
+             (sizes[-2] - sizes[-1]) # should be ~12 for paper
+            
+MAX_BUF_SZ_S = p * V_paper * (utility(0) + gp_paper) # should be ~22 for paper
+
+
+# Q: number of chunks
+def objective(Q, m):
+    return (V * (utility(m) + gp) - Q) / (sizes[m] * 10 ** 6) # plot S in bits not Mb
+
+def plot_min_max_buf(ax):
+    # X = [V * (utility(m) + gp) for m in range(len(bitrates))]
+    # for x in X:
+        # plt.axesvline(x = p * x, linestyle='dotted')
+
+    ax.axvline(x = MIN_BUF_SZ_S, linestyle='dotted', color='gray')
+    ax.axvline(x = MAX_BUF_SZ_S, linestyle='dotted', color='gray')
+
+
+def plot_objective(V, gp, ax):
+    Qp = np.linspace(0, 25, num=10)
+    ax.set_ylim(0, 1 * 10 ** -6)
+    for m in range(len(bitrates)):
+        ax.plot(Qp, objective(Qp / p, m), label=bitrates[m])
+
+    plot_min_max_buf(ax)
+    ax.set_xlabel("Q (sec)")
+    ax.set_ylabel("Objective value")
+    ax.legend()
+    ax.set_title("V = " + str(V) + ", gp = " + str(gp))
+
+
+def choose_bitrate(Q):
+    # For Puffer, this happens in the media server
+    full_buf_s = p * V * (utility(0) + gp)
+    assert(full_buf_s == MAX_BUF_SZ_S)
+    if Q * p > full_buf_s:
+        return 0
+    objectives = [objective(Q, m) for m in range(len(bitrates))]
+    chosen_idx = objectives.index(max(objectives))
+    return bitrates[chosen_idx]
+    
+def plot_decision(V, gp, ax):
+    Qp = np.linspace(0, 25, num=100000) # approx stepwise
+    choices = [choose_bitrate(qp / p) for qp in Qp]    
+    
+    plot_min_max_buf(ax)
+    ax.plot(Qp, choices)
+    ax.set_xlabel("Q (sec)")
+    ax.set_ylabel("Chosen bitrate (Mbps)")  
+    ax.set_title("V = " + str(V) + ", gp = " + str(gp))
+
+  
+
+#for V in [0.8, 0.93, 0.99999]:
+for V in [V_paper]:
+    for gp in [gp_paper]:
+        fig, axes = plt.subplots(2, 1)
+        plot_objective(V, gp, axes[0])
+        plot_decision(V, gp, axes[1])
+
+fig.tight_layout()
+fig.set_size_inches(8, 7, forward=True)
+plt.savefig('Fig1_Fig2.png')
+#V = MIN_BUF_SZ * (sizes[-2] - sizes[-1]) / (sizes[-2] * (utility(-1) + gp) - sizes[-1] * (utility(-2) + gp))
+#gp = MAX_BUF_SZ / V - utility(0)
+#plot_objective(V, gp)
+#plot_decision(V, gp)
