@@ -1,116 +1,180 @@
 #!/usr/bin/env python2
 # -*- coding: utf-8 -*-
 
-# For Fig 1 and 2 in paper (https://arxiv.org/pdf/1601.06748.pdf):
-# Set static V = 0.93 and gp = 5, then calculate min and max buf based on those 
-# (paper also assumes static bitrates/sizes, so min/max buf is static too for these figures).
-# The Puffer and dash.js implementations do the opposite (static min/max buf => dynamic V and gp), 
-# but this is useful to reproduce Fig 1 and 2 (and understand their units...)
-
 import numpy as np
 import matplotlib.pyplot as plt
+from collections import defaultdict
+    
+class BOLAStatic:
+    def __init__(self, bitrates, sizes, p, V, gp):
+        self.bitrates = bitrates
+        self.sizes = sizes
+        self.p = p
+        self.V = V
+        self.gp = gp
+        # Calculate M*_BUF_SZ_S from static V and gp 
+        # The Puffer and dash.js implementations do the opposite (static min/max buf => dynamic V and gp), 
+        # but this is useful to reproduce Fig 1 and 2 (and understand their units...)
+        self.MIN_BUF_SZ_S = p * V * (sizes[-2] * (self.utility(-1) + gp) - sizes[-1] * (self.utility(-2) + gp)) / \
+                 (sizes[-2] - sizes[-1]) # should be ~12 for paper
+        self.MAX_BUF_SZ_S = p * V * (self.utility(0) + gp) # should be ~22 for paper
+   
+    def utility(self, m):
+        return np.log(self.sizes[m] / self.sizes[-1])              
 
-# Mbps
-bitrates = [
-6.000,
-2.962,
-1.427,
-0.688,
-0.331]
+    # Q: number of chunks
+    def objective(self, Q, m):
+        return (self.V * (self.utility(m) + self.gp) - Q) / (self.sizes[m] * 10 ** 6) # plot S in bits not Mb
 
-# Mb
-sizes = [
-18.00,
-8.886,
-4.281,
-2.064,
-0.993]
+    def plot_objective(self, ax):
+        Qp = np.linspace(0, 25, num=10)
+        
+        # Calculate objective values
+        for m in range(len(self.bitrates)):
+            ax.plot(Qp, self.objective(Qp / self.p, m), label=self.bitrates[m])
+        
+        ax.axvline(x = self.MIN_BUF_SZ_S, linestyle='dotted', color='gray')
+        ax.axvline(x = self.MAX_BUF_SZ_S, linestyle='dotted', color='gray')
 
-def utility(m):
-    return np.log(sizes[m] / sizes[-1])
+        ax.set_ylim(0, 1 * 10 ** -6)
+        ax.set_xlabel("Q (sec)")
+        ax.set_ylabel("Objective value (S in bits)")
+        ax.set_title("V = " + str(self.V) + ", gp = " + str(self.gp) + " (static ladder)")
+        ax.legend()
+        
+    def choose_bitrate(self, Q):
+        # For Puffer, full buf check happens in the media server
+        full_buf_s = self.p * self.V * (self.utility(0) + self.gp)
+        assert(full_buf_s == self.MAX_BUF_SZ_S)
+        if Q * self.p > full_buf_s:
+            return 0
+        objectives = [self.objective(Q, m) for m in range(len(self.bitrates))]
+        chosen_idx = objectives.index(max(objectives))
+        return self.bitrates[chosen_idx]
 
-# seconds
-p = 3
-# The paper's static V and gp used for Fig 1/2
-# chunks (kind of?)
-V_static = 0.93
-gp_static = 5
-MIN_BUF_SZ_S = p * V_static * (sizes[-2] * (utility(-1) + gp_static) - sizes[-1] * (utility(-2) + gp_static)) / \
-             (sizes[-2] - sizes[-1]) # should be ~12 for paper
+    # Check math: recover static V and gp from min/max buf size
+    def recover_parameters(self):    
+        # code the math 
+        min_buf_chunks = self.MIN_BUF_SZ_S / self.p
+        max_buf_chunks = self.MAX_BUF_SZ_S / self.p
+        size_delta = self.sizes[-2] - self.sizes[-1] 
+        
+        gp_recovered = (
+                max_buf_chunks * ( self.sizes[-2] * self.utility(-1) - self.sizes[-1] * self.utility(-2) ) - 
+                    self.utility(0) * min_buf_chunks * size_delta
+             ) / (            
+                (min_buf_chunks - max_buf_chunks) * size_delta
+             )
+    
+        V_recovered = max_buf_chunks / (self.utility(0) + gp_recovered)
+        return (V_recovered, gp_recovered)
+
+    def plot_decision(self, ax):
+        Qp = np.linspace(0, 25, num=1000) # approx stepwise
+        choices = [self.choose_bitrate(qp / self.p) for qp in Qp]    
+        
+        ax.axvline(x = self.MIN_BUF_SZ_S, linestyle='dotted', color='gray')
+        ax.axvline(x = self.MAX_BUF_SZ_S, linestyle='dotted', color='gray')
+        ax.plot(Qp, choices)
+        ax.set_xlabel("Q (sec)")
+        ax.set_ylabel("Chosen bitrate (Mbps)")  
+        ax.set_title("Static V = " + str(self.V) + ", gp = " + str(self.gp) + " (static ladder)")
+    
+# end BOLAStatic
+
+class BOLADynamic:
+    # For the real BOLA, min_buf_s = 3p. Allow other value for test.  
+    def __init__(self, min_buf_s = 3 * 2.002):
+        self.min_buf_s = min_buf_s
+        
+    def plot_objective(self, ax):        
+        # Read objective values from file written by the real BOLA 
+        with open('fig1_out.txt') as f:
+            # label => [ [buf samples], [obj samples] ]
+            to_plot = defaultdict(lambda: [[], []])
             
-MAX_BUF_SZ_S = p * V_static * (utility(0) + gp_static) # should be ~22 for paper
+            for line in f:
+                label, buf, obj = line.split()
+                to_plot[label][0].append(float(buf))
+                # Obj is calculated wrt bytes, but paper plots wrt bits
+                to_plot[label][1].append(float(obj) / 8) 
 
-
-# Q: number of chunks
-def objective(Q, m):
-    return (V * (utility(m) + gp) - Q) / (sizes[m] * 10 ** 6) # plot S in bits not Mb
-
-def plot_min_max_buf(ax):
-    ax.axvline(x = MIN_BUF_SZ_S, linestyle='dotted', color='gray')
-    ax.axvline(x = MAX_BUF_SZ_S, linestyle='dotted', color='gray')
-
-def plot_objective(V, gp, ax):
-    Qp = np.linspace(0, 25, num=10)
-    ax.set_ylim(0, 1 * 10 ** -6)
-    for m in range(len(bitrates)):
-        ax.plot(Qp, objective(Qp / p, m), label=bitrates[m])
-
-    plot_min_max_buf(ax)
-    ax.set_xlabel("Q (sec)")
-    ax.set_ylabel("Objective value")
-    ax.legend()
-    ax.set_title("V = " + str(V) + ", gp = " + str(gp))
-
-def choose_bitrate(Q):
-    # For Puffer, this happens in the media server
-    full_buf_s = p * V * (utility(0) + gp)
-    assert(full_buf_s == MAX_BUF_SZ_S)
-    if Q * p > full_buf_s:
-        return 0
-    objectives = [objective(Q, m) for m in range(len(bitrates))]
-    chosen_idx = objectives.index(max(objectives))
-    return bitrates[chosen_idx]
+        # Plot biggest to smallest, to keep colors consistent
+        for label, data in sorted(to_plot.items(), reverse=True, key=lambda kv:float(kv[0])):
+            # Labels stored as size_t for convenience -- convert back to Mbps
+            # TODO: probs won't divide for real BOLA, depending on what I write out as label
+            ax.plot(data[0], data[1], label=float(label) / 1000)
     
-def plot_decision(V, gp, ax):
-    Qp = np.linspace(0, 25, num=100000) # approx stepwise
-    choices = [choose_bitrate(qp / p) for qp in Qp]    
+        # Plot min buf (should correspond to intersection of smallest/second-smallest objectives)
+        ax.axvline(x = self.min_buf_s, linestyle='dotted', color='gray')
+        # Don't plot max buf -- doesn't correspond to anything on plot, 
+        # since media server handles decision not to send
+        ax.set_ylim(0, 1 * 10 ** -6)
+        ax.set_xlabel("Q (sec)")
+        ax.set_ylabel("Objective value (S in bits)")     
+        ax.set_title("Dynamic ladder")
+        ax.legend()
+
+    def plot_decision(self, ax):
+        # Read decisions from file written by the real BOLA 
+        with open('fig2_out.txt') as f:
+            bufs = []
+            decisions = []
+            
+            for line in f:
+                buf, decision = line.split()
+                bufs.append(float(buf))
+                decisions.append(float(decision) / 1000)
+        
+        ax.plot(bufs, decisions)                         
+        ax.axvline(x = self.min_buf_s, linestyle='dotted', color='gray')
+
+        ax.set_xlabel("Q (sec)")
+        ax.set_ylabel("Chosen bitrate (Mbps)")  
+        ax.set_title("Dynamic ladder")
+
+# end BOLADynamic
+        
+def main():
+    # 1. Static ladder/V/gp (as in paper): 
+    # Recover Fig 1/2, and V/gp from min/max buf 
+    # Mbps
+    bitrates = [
+    6.000,
+    2.962,
+    1.427,
+    0.688,
+    0.331]
     
-    plot_min_max_buf(ax)
-    ax.plot(Qp, choices)
-    ax.set_xlabel("Q (sec)")
-    ax.set_ylabel("Chosen bitrate (Mbps)")  
-    ax.set_title("V = " + str(V) + ", gp = " + str(gp))
+    # Mb
+    sizes = [
+    18.00,
+    8.886,
+    4.281,
+    2.064,
+    0.993]
 
-def calculate_parameters(min_buf_s, max_buf_s):    
-    # code the math 
-    min_buf_chunks = min_buf_s / p
-    max_buf_chunks = max_buf_s / p
-    size_delta = sizes[-2] - sizes[-1] 
+    static = BOLAStatic(bitrates=bitrates, sizes=sizes, p=3, V=0.93, gp=5)
+    V_recovered, gp_recovered = static.recover_parameters()
+    print("Recovered V " + str(V_recovered) + ", gp " + str(gp_recovered))
+
+    fig, axes = plt.subplots(2, 1)
+    fig.tight_layout()
+    fig.set_size_inches(8, 7, forward=True)
+   
+    static.plot_objective(axes[0])
+    static.plot_decision(axes[1])
     
-    gp = (
-            max_buf_chunks * ( sizes[-2] * utility(-1) - sizes[-1] * utility(-2) ) - \
-                utility(0) * min_buf_chunks * size_delta
-         ) / \
-         (
-            (min_buf_chunks - max_buf_chunks) * size_delta
-         )
+    plt.savefig('Fig1_Fig2_recover_V_gp.png')
+    axes[0].clear()
+    axes[1].clear()
+    # 2. Read values from files output by test_bola_basic (which uses a static ladder/V/gp, as above)
+    # Recover Fig 1/2 (test_bola_basic checks recovering V/gp)
+    dynamic = BOLADynamic(min_buf_s=static.MIN_BUF_SZ_S)
+    dynamic.plot_objective(axes[0])
+    dynamic.plot_decision(axes[1])
+    plt.savefig('Fig1_Fig2_dynamic.png')
 
-    V = max_buf_chunks / (utility(0) + gp)
-    # TODO: fix nonsense scoping
-    return (V, gp)
-
-# 1. M*_BUF_SZ_S: static like they are in Puffer (here calculated using static V and gp, 
-# which we're now trying to recover)
     
-# 2. Using min/max buf and algebra, calculate V and gp and hopefully they're 0.93 and 5
-V, gp = calculate_parameters(MIN_BUF_SZ_S, MAX_BUF_SZ_S)
-print("Recovered V " + str(V) + ", gp " + str(gp))
-
-
-fig, axes = plt.subplots(2, 1)
-plot_objective(V, gp, axes[0])
-plot_decision(V, gp, axes[1])
-
-fig.tight_layout()
-fig.set_size_inches(8, 7, forward=True)
-plt.savefig('Fig1_Fig2_recover_V_gp.png')
+if __name__ == "__main__":
+    main()
