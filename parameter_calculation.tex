@@ -1,0 +1,71 @@
+\documentclass[12pt]{article}
+ 
+\usepackage[margin=1in]{geometry} 
+\usepackage{amsmath,amsthm,amssymb,enumitem, wasysym}
+\usepackage{slashed}
+\usepackage{tikz}
+\newcommand{\N}{\mathbb{N}}
+\newcommand{\Z}{\mathbb{Z}}
+\DeclareMathOperator{\Q}{\mathbb{Q}}
+\DeclareMathOperator{\R}{\mathbb{R}}
+\usepackage[T1]{fontenc}
+ 
+\newenvironment{lemmaNoNum}[2][Lemma 1:]{\begin{trivlist}
+\item[\hskip \labelsep {\bfseries #1}]}{\end{trivlist}}
+
+\begin{document}
+
+\textbf{Calculation of BOLA parameters $V$ and $\gamma$}  
+\begin{itemize}
+\setlength\itemsep{0.3em}
+    \item 
+$V$, $\gamma$, and $p$: see paper 
+\item
+$S_{-1}$: size of smallest chunk 
+\item
+$u_{-1}$: utility of smallest chunk 
+\item
+$S_{-2}$: size of second-smallest chunk (TODO: handle $S_{-2} == S_{-1}$)
+\item
+$u_{-2}$: utility of second-smallest chunk 
+\item
+$u_{0}$: highest utility 
+\item
+$MAXBUF$: Buffer level (chunks) above which no chunk is sent (only considering buffer's contribution to the decision - Puffer media server has more criteria) 
+\item
+$MINBUF$: Buffer level (chunks) at which objectives are equal for two smallest formats. Assume $MAXBUF > MINBUF$.
+\end{itemize}
+(Note: size units don't impact parameter calculation, but utility units do.)
+\begin{align}
+\intertext{First, directly from the solution to (9) in the paper:}
+V(u_{0} + \gamma p) &= MAXBUF 
+\intertext{Solve (1) for $V$: }
+V &=\frac{MAXBUF}{u_{0} + \gamma p} 
+\intertext{Second, from intersecting the objectives of the smallest and second-smallest chunks (an extrapolation from the paper):}
+\frac{V(u_{-1} + \gamma p) - MINBUF}{S_{-1}} &= \frac{V(u_{-2} + \gamma p) - MINBUF}{S_{-2}} 
+\intertext{Solve (3) for $V$:}
+V &= \frac{MINBUF(S_{-2} - S_{-1})}{S_{-2}(u_{-1} + \gamma p) - S_{-1}(u_{-2} + \gamma p)}  
+\intertext{Equate the two expressions for $V$ from (2) and (4):} 
+\frac{MAXBUF}{u_{0} + \gamma p} &= \frac{MINBUF(S_{-2} - S_{-1})}{S_{-2}(u_{-1} + \gamma p) - S_{-1}(u_{-2} + \gamma p)} 
+\intertext{Solve (5) for $\gamma p$:} 
+\gamma p &= \frac{MAXBUF(S_{-2}u_{-1} - S_{-1}u_{-2}) - u_{0}MINBUF(S_{-2}-S_{-1})}{(MINBUF - MAXBUF)(S_{-2} - S_{-1})} 
+\intertext{Substitute (6) into (2) to solve for $V$.}\nonumber
+\end{align}
+
+\newpage
+\textbf{Sign of $\gamma$} \\\\
+The paper requires $\gamma > 0$, presumably since the goal is to maximize $\overline{v} + \gamma \overline{s}$, where $\overline{v}$ is average utility and $\overline{s}$ is average fraction of time spent \textbf{not} rebuffering.\\\\
+Sign is easier to reason about if $u_{-1} = 0$, but paper does not require this. \\\\
+\textbf{If} we take $u_{-1} = 0$ in (6), then we have 
+\begin{align}
+\gamma p = \frac{-MAXBUF(S_{-1}u_{-2}) - u_{0}MINBUF(S_{-2}-S_{-1})}{(MINBUF - MAXBUF)(S_{-2} - S_{-1})} &> 0
+\intertext{Note that the denominator in (7) is guaranteed to be \textbf{negative}, giving}
+-MAXBUF(S_{-1}u_{-2}) - u_{0}MINBUF(S_{-2}-S_{-1}) &< 0
+\intertext{Solve (8) for an expression wrt utility, assuming $u_{-2} > 0$:}
+\frac{u_0}{u_{-2}} &> \frac{-MAXBUF(S_{-1})}{MINBUF(S_{-2} - S_{-1})}
+\intertext{If utilities are nonnegative (paper does not explicitly require this), then LHS of (9) is nonnegative and RHS is negative, guaranteeing $\gamma > 0$.}
+\intertext{\textbf{However}, if we do not assume the value of $u_{-1}$, again noting that the denominator in (6) is negative, then $\gamma > 0$ only implies that}
+MAXBUF(S_{-2}u_{-1} - S_{-1}u_{-2}) - u_{0}MINBUF(S_{-2}-S_{-1}) &< 0
+\end{align}
+\end{document}
+
