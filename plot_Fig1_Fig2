@@ -83,13 +83,15 @@ class BOLAStatic:
 # end BOLAStatic
 
 class BOLADynamic:
-    # For the real BOLA, min_buf_s = 3p. Allow other value for test.  
+    # For the real BOLA, min_buf_s = 3 * 2.002 
+    # (chunk duration i.e. 2.002 is technically channel-specific - test only). 
+    # Allow other values of min_buf_s for test.  
     def __init__(self, min_buf_s = 3 * 2.002):
         self.min_buf_s = min_buf_s
         
-    def plot_objective(self, ax):        
+    def plot_objective(self, ax, obj_outfile):        
         # Read objective values from file written by the real BOLA 
-        with open('fig1_out.txt') as f:
+        with open(obj_outfile) as f:
             # label => [ [buf samples], [obj samples] ]
             to_plot = defaultdict(lambda: [[], []])
             
@@ -102,7 +104,7 @@ class BOLADynamic:
         # Plot biggest to smallest, to keep colors consistent
         for label, data in sorted(to_plot.items(), reverse=True, key=lambda kv:float(kv[0])):
             # Labels stored as size_t for convenience -- convert back to Mbps
-            # TODO: probs won't divide for real BOLA, depending on what I write out as label
+            # TODO: Update for real labels (format string, maybe) 
             ax.plot(data[0], data[1], label=float(label) / 1000)
     
         # Plot min buf (should correspond to intersection of smallest/second-smallest objectives)
@@ -115,15 +117,17 @@ class BOLADynamic:
         ax.set_title("Dynamic ladder")
         ax.legend()
 
-    def plot_decision(self, ax):
+    def plot_decision(self, ax, decision_outfile):
         # Read decisions from file written by the real BOLA 
-        with open('fig2_out.txt') as f:
+        with open(decision_outfile) as f:
             bufs = []
             decisions = []
             
             for line in f:
                 buf, decision = line.split()
                 bufs.append(float(buf))
+                # Labels stored as size_t for convenience -- convert back to Mbps
+                # TODO: Update for real labels (format string, maybe)
                 decisions.append(float(decision) / 1000)
         
         ax.plot(bufs, decisions)                         
@@ -157,6 +161,7 @@ def main():
     static = BOLAStatic(bitrates=bitrates, sizes=sizes, p=3, V=0.93, gp=5)
     V_recovered, gp_recovered = static.recover_parameters()
     print("Recovered V " + str(V_recovered) + ", gp " + str(gp_recovered))
+    print("min_buf_s " + str(static.MIN_BUF_SZ_S) + ", max_buf_s " + str(static.MAX_BUF_SZ_S))
 
     fig, axes = plt.subplots(2, 1)
     fig.tight_layout()
@@ -168,13 +173,13 @@ def main():
     plt.savefig('Fig1_Fig2_recover_V_gp.png')
     axes[0].clear()
     axes[1].clear()
+    
     # 2. Read values from files output by test_bola_basic (which uses a static ladder/V/gp, as above)
     # Recover Fig 1/2 (test_bola_basic checks recovering V/gp)
-    dynamic = BOLADynamic(min_buf_s=static.MIN_BUF_SZ_S)
-    dynamic.plot_objective(axes[0])
-    dynamic.plot_decision(axes[1])
-    plt.savefig('Fig1_Fig2_dynamic.png')
-
+    test_dynamic = BOLADynamic(min_buf_s=static.MIN_BUF_SZ_S)
+    test_dynamic.plot_objective(axes[0], 'tmp_fig1_out.txt')
+    test_dynamic.plot_decision(axes[1], 'tmp_fig2_out.txt')
+    plt.savefig('Fig1_Fig2_test_dynamic.png')
     
 if __name__ == "__main__":
     main()
