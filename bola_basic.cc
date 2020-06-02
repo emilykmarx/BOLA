@@ -14,6 +14,9 @@ BolaBasic::BolaBasic(const WebSocketClient & client,
     (void)abr_config;
     log.open(log_filename, fstream::out | fstream::trunc);
     if (not log.is_open()) throw runtime_error("couldn't open " + log_filename); 
+
+    calculate_parameters({});
+    log << "V = " << params.V << ", gp = " << params.gp << "\n";
 }
 
 /* Note BOLA uses the raw value of utility directly. */
@@ -23,7 +26,7 @@ double BolaBasic::utility(double raw_ssim) const {
 }
 
 /* Size units affect objective value, but not the decision */
-double BolaBasic::objective(Parameters params, const Encoded& encoded, double client_buf_chunks) const {
+double BolaBasic::objective(const Encoded& encoded, double client_buf_chunks) const {
     return (params.V * (encoded.utility + params.gp) - client_buf_chunks) / encoded.size;
 }
 
@@ -39,81 +42,71 @@ double BolaBasic::objective(Parameters params, const Encoded& encoded, double cl
  * 
  * Note: X_buf_chunks represents a number of chunks, but may be fractional (as in paper) 
  * 
- * Sorts encoded_formats
  */
-optional<BolaBasic::Parameters>
-BolaBasic::calculate_parameters(double min_buf_chunks, double max_buf_chunks, 
-                                vector<Encoded> & encoded_formats) const {
-    assert(encoded_formats.size() > 1);
-    
-    /* Sort encoded formats ascending by size (secondarily, ascending by utility) */
-    sort(encoded_formats.begin(), encoded_formats.end(),
-         [](const Encoded& a, const Encoded& b) {
-                return tie(a.size, a.utility) < tie(b.size, b.utility);
-         });
-    
-    const Encoded & smallest = encoded_formats.front();
-    const Encoded & second_smallest = encoded_formats.at(1);
-    const Encoded & largest = encoded_formats.back();
-    // TODO: handle largest.utility + gp == 0
-    size_t size_delta = second_smallest.size - smallest.size; 
+// TODO: encoded_formats is only for test
+// TODO: move out of constructor - all static (commit and make graphs first!!!!)
+void BolaBasic::calculate_parameters(optional<vector<Encoded>> encoded_formats) {
+    // vf is not meaningful, since these are averages over past encodings across channels
+    VideoFormat fake("11x11-11");
+    // TODO: make const & after test/make a better test
+    Encoded smallest = { fake,
+        size_ladder_bytes.front(), utility(ssim_index_ladder.front()) };
+    Encoded second_smallest = { fake,
+        size_ladder_bytes.at(1), utility(ssim_index_ladder.at(1)) };
+    Encoded largest = { fake,
+        size_ladder_bytes.back(), utility(ssim_index_ladder.back()) };
 
-    /* 2 ways to divide by zero in gp calculation */
-    assert(MIN_BUF_CHUNKS < max_buf_chunks);    
-
-    if (size_delta == 0) {
-        // caller handles
-        return nullopt;
+    if (encoded_formats) {
+        smallest = encoded_formats.value().front();
+        second_smallest = encoded_formats.value().at(1);
+        largest = encoded_formats.value().back();
     }
 
+    size_t size_delta = second_smallest.size - smallest.size; 
+    
     // Size units don't affect gp. Utility units do.
     double gp = (
-        max_buf_chunks * ( second_smallest.size * smallest.utility - smallest.size * second_smallest.utility ) - 
+        MAX_BUF_CHUNKS * ( second_smallest.size * smallest.utility - smallest.size * second_smallest.utility ) - 
             /* Best utility = largest (assumes utility is nondecreasing with size, as required by BOLA.) */
-            largest.utility * min_buf_chunks * size_delta
+            largest.utility * MIN_BUF_CHUNKS * size_delta
      ) / (
-        (min_buf_chunks - max_buf_chunks) * size_delta
+        (MIN_BUF_CHUNKS - MAX_BUF_CHUNKS) * size_delta
      );
 
-    double V = max_buf_chunks / (largest.utility + gp);
-    assert(V > 0);
-    return Parameters{V, gp};
+    double V = MAX_BUF_CHUNKS / (largest.utility + gp);
+    params = {V, gp};
 }
 
-VideoFormat BolaBasic::choose_max_objective(const Parameters & params, 
-                                            const std::vector<Encoded> & encoded_formats, 
+BolaBasic::Encoded BolaBasic::choose_max_objective(const std::vector<Encoded> & encoded_formats, 
                                             double client_buf_chunks) const {
     const auto chosen = 
         max_element(encoded_formats.begin(), encoded_formats.end(),
-                    [this, params, client_buf_chunks](const Encoded& a, const Encoded& b) { 
-                          return objective(params, a, client_buf_chunks) < 
-                                 objective(params, b, client_buf_chunks);
+                    [this, client_buf_chunks](const Encoded& a, const Encoded& b) { 
+                          return objective(a, client_buf_chunks) < 
+                                 objective(b, client_buf_chunks);
                     }
                    );
-    return chosen->vf;
+    
+    return *chosen;
 }
 
-// TODO: Plot Fig 1/2 every x video_ts. Also plot the actual client_buf, bandwidth. 
-void BolaBasic::do_logging(uint64_t vts, const Parameters & params) 
+void BolaBasic::do_logging(const std::vector<Encoded> & encoded_formats, 
+                           double chunk_duration_s, uint64_t vts, const string & channel_name)
 {
-    log << "vts " << vts << endl;
-    
-    /* V and gp */
-    log << "V = " << params.V << ", gp = " << params.gp << "\n";
+    log << channel_name << ", vts " << vts << "\n";
 
     /* Log objectives and decisions (for Fig 1/2) */
-    //fig_1(encoded_formats, params.value(), chunk_duration_s, next_vts);
-    //fig_2(encoded_formats, params.value(), chunk_duration_s, next_vts);
+    fig_1(encoded_formats, chunk_duration_s, vts, channel_name);
+    fig_2(encoded_formats, chunk_duration_s, vts, channel_name);
 
-    // Record mean V/gp/size/ssim.
-    // Run confint on .log (compare to BBA)
+    // Could also log mean V/gp/size/ssim, client_buf, bandwidth
+    // TODO: Run confint on .log (compare to BBA)
 }
 
 VideoFormat BolaBasic::select_video_format()
 {
     const auto & channel = client_.channel();
     double chunk_duration_s = channel->vduration() * 1.0 / channel->timescale();
-    double max_buf_chunks = WebSocketClient::MAX_BUFFER_S / chunk_duration_s;
     double client_buf_s = max(client_.video_playback_buf(), 0.0);
     double client_buf_chunks = client_buf_s / chunk_duration_s;
     
@@ -124,67 +117,69 @@ VideoFormat BolaBasic::select_video_format()
     const auto & ssim_map = channel->vssim(next_vts);
     const auto & vformats = channel->vformats();
     
-    // BOLA parameter calculations require at least two formats
-    if (vformats.size() < 2) {
-        assert(not vformats.empty());
-        return vformats.front();
-    }
-
     transform(vformats.begin(), vformats.end(), back_inserter(encoded_formats),
-          [this, data_map, ssim_map](VideoFormat vf) { 
-                return Encoded { vf, get<1>(data_map.at(vf)), ssim_map.at(vf) }; 
+          [this, data_map, ssim_map](const VideoFormat & vf) { 
+                return Encoded { vf, get<1>(data_map.at(vf)), utility(ssim_map.at(vf)) }; 
           });
 
-    /* 2. Get BOLA parameters */
-    optional<Parameters> params = calculate_parameters(MIN_BUF_CHUNKS, max_buf_chunks, encoded_formats);
-    if (not params) {
-        // Zero size delta => just pick the better SSIM
-        // TODO: if delta == 0, does it make sense to return one of the two smallest chunks? 
-        // (what if buf is high?)
-        // What gets chosen if I throw?
-    }
-    
     // TODO: test only
-    do_logging(next_vts, params.value()); 
+    do_logging(encoded_formats, chunk_duration_s, next_vts, channel->name()); 
 
-    /* 3. Using parameters, calculate objective for each format.
+    /* 2. Using parameters, calculate objective for each format.
      * Choose format with max objective. */
-    return choose_max_objective(params.value(), encoded_formats, client_buf_chunks);
+    return choose_max_objective(encoded_formats, client_buf_chunks).vf;
 }
 
 /* Output the data for Fig 1. Plotting script can scale objective to match units in paper (size in bits) */
-void BolaBasic::fig_1(const vector<Encoded> & encoded_formats, const Parameters & params, 
-                      double chunk_duration_s, uint64_t vts) const {
-    if (vts > 180180 * 30) return; // TODO: figure out how often it's useful to plot
+void BolaBasic::fig_1(const vector<Encoded> & encoded_formats,
+                           double chunk_duration_s, uint64_t vts, const string & channel_name) const 
+{
+    // if (vts > 180180 * NPLOTS) return; 
+     
+    const string outfilename = "abr/test/" + channel_name + "/fig1_vts" + to_string(vts) + "_out.txt";
+
+    // avoid overwriting 
+    ifstream fig_exists{outfilename};
+    if (fig_exists) return;
     
-    unsigned nbuf_samples = 3; // Objectives should be linear
-    const string outfilename = "fig1_vts" + to_string(vts) + "_out.txt";
     ofstream fig_out{outfilename};
     if (not fig_out.is_open()) throw runtime_error("couldn't open " + outfilename); 
     
+    unsigned nbuf_samples = 3; // Objectives are linear
     for (const Encoded & encoded : encoded_formats) {
         for (double client_buf_s = 0; client_buf_s <= 25.0; client_buf_s += 25.0 / nbuf_samples) {
-                fig_out << encoded.vf.width << " "
-                        << client_buf_s << " "
-                        << objective(params, encoded, client_buf_s / chunk_duration_s) 
-                        << "\n";
+            /* Write format, size, utility for Fig 1 */
+            fig_out << encoded.vf.to_string() << " "
+                    << encoded.size << " "
+                    << encoded.utility << " "
+                    << client_buf_s << " "
+                    << objective(encoded, client_buf_s / chunk_duration_s) 
+                    << "\n";
         }
     }
 }
 
 /* Output the data for Fig 2 */
-void BolaBasic::fig_2(const vector<Encoded> & encoded_formats, const Parameters & params,
-                      double chunk_duration_s, uint64_t vts) const {
-    if (vts > 180180 * 30) return; // TODO: figure out how often it's useful to plot
+void BolaBasic::fig_2(const vector<Encoded> & encoded_formats, 
+                           double chunk_duration_s, uint64_t vts, const string & channel_name) const 
+{
+    // if (vts > 180180 * NPLOTS) return; 
     
-    unsigned nbuf_samples = 1000; // Approx stepwise 
-    const string outfilename = "fig2_vts" + to_string(vts) + "_out.txt";
+    const string outfilename = "abr/test/" + channel_name + "/fig2_vts" + to_string(vts) + "_out.txt";
+   
+    // avoid overwriting 
+    ifstream fig_exists{outfilename};
+    if (fig_exists) return;
+    
     ofstream fig_out{outfilename};
     if (not fig_out.is_open()) throw runtime_error("couldn't open " + outfilename); 
     
+    unsigned nbuf_samples = 1000; // Approx stepwise 
     for (double client_buf_s = 0; client_buf_s <= 25.0; client_buf_s += 25.0 / nbuf_samples) {
+        const Encoded & chosen = choose_max_objective(encoded_formats, client_buf_s / chunk_duration_s);
+        /* Format string and utility already in Fig 1 legend -- just write size */
         fig_out << client_buf_s << " "
-                << choose_max_objective(params, encoded_formats, client_buf_s / chunk_duration_s).width
+                << chosen.size << " "
                 << "\n";
     }
 }
