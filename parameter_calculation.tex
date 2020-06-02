@@ -31,41 +31,77 @@ $u_{-2}$: utility of second-smallest chunk
 \item
 $u_{0}$: highest utility 
 \item
-$MAXBUF$: Buffer level (chunks) above which no chunk is sent (only considering buffer's contribution to the decision - Puffer media server has more criteria) 
+$MAXBUF$: Buffer level (chunks) at which largest chunk has an objective value of zero
 \item
-$MINBUF$: Buffer level (chunks) at which objectives are equal for two smallest formats. Assume $MAXBUF > MINBUF$.
+$LOWBUF$: Buffer level (chunks) at which smallest chunk has an objective value of zero (\textbf{not} buffer level below which smallest chunk is always chosen)
+% TODO: check equation numbering 
 \end{itemize}
 (Note: size units don't impact parameter calculation, but utility units do.)
-\begin{align}
-\intertext{First, directly from the solution to (9) in the paper:}
+
+ \begin{align}
+\intertext{First, directly from the solution to (9) in the paper$^1$:}
 V(u_{0} + \gamma p) &= MAXBUF 
 \intertext{Solve (1) for $V$: }
 V &=\frac{MAXBUF}{u_{0} + \gamma p} 
-\intertext{Second, from intersecting the objectives of the smallest and second-smallest chunks (an extrapolation from the paper):}
-\frac{V(u_{-1} + \gamma p) - MINBUF}{S_{-1}} &= \frac{V(u_{-2} + \gamma p) - MINBUF}{S_{-2}} 
-\intertext{Solve (3) for $V$:}
-V &= \frac{MINBUF(S_{-2} - S_{-1})}{S_{-2}(u_{-1} + \gamma p) - S_{-1}(u_{-2} + \gamma p)}  
-\intertext{Equate the two expressions for $V$ from (2) and (4):} 
-\frac{MAXBUF}{u_{0} + \gamma p} &= \frac{MINBUF(S_{-2} - S_{-1})}{S_{-2}(u_{-1} + \gamma p) - S_{-1}(u_{-2} + \gamma p)} 
-\intertext{Solve (5) for $\gamma p$:} 
-\gamma p &= \frac{MAXBUF(S_{-2}u_{-1} - S_{-1}u_{-2}) - u_{0}MINBUF(S_{-2}-S_{-1})}{(MINBUF - MAXBUF)(S_{-2} - S_{-1})} 
-\intertext{Substitute (6) into (2) to solve for $V$.}\nonumber
+\intertext{By definition of $LOWBUF$, the smallest format has an objective value of zero when}
+     Q &= LOWBUF 
+    \intertext{Substitute (3) into the definition of objective: }
+    \frac{V(u_{-1} + \gamma p) - LOWBUF}{S_0} &= 0
+\intertext{Solve (4) for $V$:}
+V &= \frac{LOWBUF}{u_{-1} + \gamma p} 
+\intertext{Equate the two expressions for $V$ from (2) and (5):} 
+\frac{MAXBUF}{u_{0} + \gamma p} &= \frac{LOWBUF}{u_{-1} + \gamma p} 
+\intertext{Solve (6) for $\gamma p$:} 
+\gamma p &= \frac{LOWBUF(u_0) - MAXBUF(u_{-1})}{MAXBUF - LOWBUF}
+\intertext{Substitute (7) into (2) to solve for $V$.}\nonumber
 \end{align}
 
 \newpage
 \textbf{Sign of $\gamma$} \\\\
 The paper requires $\gamma > 0$, presumably since the goal is to maximize $\overline{v} + \gamma \overline{s}$, where $\overline{v}$ is average utility and $\overline{s}$ is average fraction of time spent \textbf{not} rebuffering.\\\\
 Sign is easier to reason about if $u_{-1} = 0$, but paper does not require this. \\\\
-\textbf{If} we take $u_{-1} = 0$ in (6), then we have 
-\begin{align}
-\gamma p = \frac{-MAXBUF(S_{-1}u_{-2}) - u_{0}MINBUF(S_{-2}-S_{-1})}{(MINBUF - MAXBUF)(S_{-2} - S_{-1})} &> 0
-\intertext{Note that the denominator in (7) is guaranteed to be \textbf{negative}, giving}
--MAXBUF(S_{-1}u_{-2}) - u_{0}MINBUF(S_{-2}-S_{-1}) &< 0
-\intertext{Solve (8) for an expression wrt utility, assuming $u_{-2} > 0$:}
-\frac{u_0}{u_{-2}} &> \frac{-MAXBUF(S_{-1})}{MINBUF(S_{-2} - S_{-1})}
-\intertext{If utilities are nonnegative (paper does not explicitly require this), then LHS of (9) is nonnegative and RHS is negative, guaranteeing $\gamma > 0$.}
-\intertext{\textbf{However}, if we do not assume the value of $u_{-1}$, again noting that the denominator in (6) is negative, then $\gamma > 0$ only implies that}
-MAXBUF(S_{-2}u_{-1} - S_{-1}u_{-2}) - u_{0}MINBUF(S_{-2}-S_{-1}) &< 0
+\textbf{If} we take $u_{-1} = 0$ in (7), then we have 
+\setcounter{equation}{0}
+\begin{align} 
+\gamma p = \frac{LOWBUF(u_0)}{MAXBUF - LOWBUF} &> 0
+\intertext{Note that the denominator in (1) is guaranteed to be \textbf{positive}, giving}
+LOWBUF(u_0) &> 0
+\intertext{If $u_0 > 0$ (paper does not explicitly require this), then (2) is true, guaranteeing $\gamma > 0$.}
+\intertext{\textbf{However}, if we do not assume the value of $u_{-1}$, again noting that the denominator in (7) is positive, then $\gamma > 0$ only implies that}
+LOWBUF(u_0) - MAXBUF(u_{-1}) &> 0
 \end{align}
+
+\newpage
+\textbf{Dash.js parameter calculation} \\\\
+Let $DASHBUF = 10 / p$ (from constant $MINIMUM\_BUFFER\_S$ = 10 in code). \\ 
+
+From a comment (consistent with their expressions for $V$ and $\gamma p)$: 
+\setcounter{equation}{0}
+\begin{align}
+V(u_{-1} + \gamma p) &= DASHBUF
+\intertext{Rearrange:}
+V(u_{-1} + \gamma p) - DASHBUF &= 0
+\intertext{Notice (2) implies that the objective for the smallest chunk has value 0 at DASHBUF.}
+\end{align}
+
+\newpage
+\textbf{Footnotes} \\
+\begin{enumerate}
+    \item 
+    Derivation (I don't see this in the paper): \\
+    
+    Let $S_0$ be the size of the largest format.
+    The largest format has an objective value of zero when 
+    \setcounter{equation}{0}
+    \begin{align} 
+    Q &= MAXBUF 
+    \intertext{Substitute (1) into the definition of objective: }
+    \frac{V(u_0 + \gamma p) - MAXBUF}{S_0} &= 0
+    \intertext{Solve (2) for MAXBUF:}
+    V(u_{0} + \gamma p) &= MAXBUF 
+    \end{align}
+  
+\end{enumerate}
+
 \end{document}
 
