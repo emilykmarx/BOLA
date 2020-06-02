@@ -7,6 +7,7 @@ Created on Wed May 27 14:26:21 2020
 """
 from collections import defaultdict
 import numpy as np
+import pprint
 
 # For size and SSIM:
 # Influx query groups by {channel, format}; average over channel to get a single ladder of len 10
@@ -35,8 +36,11 @@ def parse(filename):
         # Average ladders across channels    
         return np.mean(ladders.values(), axis=0)
     
+# Print conveniently
 print('Avg size (bytes):')
-print(parse('avg_sizes'))    
+avg_sizes = parse('avg_sizes')
+pprint.pprint([int(round(size)) for size in avg_sizes])
 
 print('Avg ssim_index:')
-print(parse('avg_ssims'))    
+avg_ssims = parse('avg_ssims')
+pprint.pprint(avg_ssims)
