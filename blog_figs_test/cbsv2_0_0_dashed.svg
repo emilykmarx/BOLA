@@ -2419,4 +2419,8 @@
       </g>
     </g>
   </g>
+  <line style="paint-order: fill; stroke-dasharray: 4px; stroke: rgb(118, 112, 112); fill: rgb(255, 255, 255);" x1="356.324" y1="255.131" x2="356.324" y2="452.131"/>
+  <line style="paint-order: fill; stroke-dasharray: 4px; stroke: rgb(118, 112, 112); fill: rgb(252, 247, 247);" x1="356.324" y1="10.131" x2="356.324" y2="207.131"/>
+  <line style="paint-order: fill; stroke-dasharray: 4px; stroke: rgb(118, 112, 112); fill: rgb(255, 255, 255);" x1="111.324" y1="255.131" x2="111.324" y2="452.131"/>
+  <line style="paint-order: fill; stroke-dasharray: 4px; stroke: rgb(118, 112, 112); fill: rgb(255, 255, 255);" x1="111.324" y1="10.131" x2="111.324" y2="207.131"/>
 </svg>
